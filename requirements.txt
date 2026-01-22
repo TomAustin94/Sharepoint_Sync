@@ -1,0 +1,22 @@
+# Dependencies and steps for the SharePoint-to-OneDrive sync script
+
+# 1. Authentication prerequisites
+#    - Register an Azure AD application with delegated permissions for Microsoft Graph (Sites.Read.All, Files.ReadWrite.All).
+#    - Secure a client secret or certificate and grant admin consent on the tenant.
+#    - Install and configure the Azure CLI or MSAL-based authentication helper to fetch OAuth tokens silently.
+
+# 2. Enumerate user-accessible SharePoint sites
+#    - Use Microsoft Graph's /me/followedSites or /user/{id}/joinedSites to surface sites the user can access.
+#    - Filter sites by role (Admin/Owner/Member) and metadata (driveUrl) so they map to document libraries.
+#    - Persist site URLs in a structured format (JSON or CSV) for downstream sync operations.
+
+# 3. Automate OneDrive sync configuration
+#    - Ensure the OneDrive client is installed and the user is signed in; configure the sync root via command-line parameters or XML templates.
+#    - Detect which SharePoint sites/drives are already registered with the OneDrive client (via settings XML, local cache, or CLI status) to skip duplication.
+#    - Map each remaining document library URL to a local folder using the OneDrive sync client command (e.g., `onedrive.exe /sync` or `onedrive --synchronize --folder "<URL>"` depending on platform).
+#    - Monitor the client output/logs to confirm that each site starts syncing and handle any conflicts or authentication prompts.
+
+# 4. Housekeeping and user feedback
+#    - Cache successful sync mappings to avoid reconfiguring unchanged sites.
+#    - Provide a summary of synced sites with their local paths and any unresolved issues.
+#    - Clean up temporary tokens and ensure logging aligns with organizational policies.
