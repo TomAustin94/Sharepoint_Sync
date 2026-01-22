@@ -24,6 +24,49 @@ param(
     [switch]$Verbose
 )
 
+function Write-LogLine {
+    param(
+        [string]$Message,
+        [ValidateSet("INFO","SUCCESS","WARN","ERROR")]$Level = "INFO"
+    )
+
+    $Color = switch ($Level) {
+        "SUCCESS" { "Green" }
+        "WARN"    { "Yellow" }
+        "ERROR"   { "Red" }
+        default   { "Cyan" }
+    }
+
+    Write-Host "[$Level] $Message" -ForegroundColor $Color
+}
+
+function Validate-Config {
+    param(
+        $ConfigData,
+        [string]$Path
+    )
+
+    $RequiredKeys = @(
+        "tenant_id",
+        "client_id",
+        "client_secret",
+        "sync_command_template",
+        "sync_root"
+    )
+
+    $Missing = foreach ($Key in $RequiredKeys) {
+        $Value = $ConfigData.$Key
+        if (-not $Value -or [string]::IsNullOrWhiteSpace("$Value")) {
+            $Key
+        }
+    }
+
+    if ($Missing) {
+        $List = $Missing -join ", "
+        throw "Configuration file '$Path' is missing the required properties: $List."
+    }
+}
+
 function Get-JsonFile {
     param([string]$Path, $Default)
     if (Test-Path $Path) {
@@ -90,17 +133,36 @@ function Sanitize-FolderName {
 }
 
 if (-not (Test-Path $Config)) {
-    Write-Error "Configuration file $Config not found."
+    Write-LogLine "Configuration file '$Config' not found. Please create it or pass -Config with a valid path." "ERROR"
     exit 1
 }
 
 $ConfigData = Get-JsonFile -Path $Config -Default @{ }
+$ConfigData = $ConfigData ?? @{ }
+try {
+    Validate-Config -ConfigData $ConfigData -Path $Config
+} catch {
+    Write-LogLine $_.Exception.Message "ERROR"
+    exit 1
+}
+
+Write-LogLine "Loaded configuration and validated required fields." "SUCCESS"
 $CachePath = $ConfigData.cache_file ?? ".\sharepoint_sync_cache.json"
 $Cache = Get-JsonFile -Path $CachePath -Default @{ syncedSites = @() }
 $Cache.syncedSites = @($Cache.syncedSites)
+Write-LogLine "Using cache file at $CachePath" "INFO"
 
 $StatusCommand = $ConfigData.status_command
 $SyncedUrls = Get-SyncedUrls -StatusCommand $StatusCommand
+if ($StatusCommand) {
+    Write-LogLine "Status command executed; detected $($SyncedUrls.Count) currently syncing URL(s)." "INFO"
+} else {
+    Write-LogLine "No status command configured; all joined sites will be considered for new syncs." "WARN"
+}
+
+if ($DryRun) {
+    Write-LogLine "Dry run enabled; OneDrive sync commands will only be logged." "WARN"
+}
 
 $Token = Get-AccessToken -TenantId $ConfigData.tenant_id `
     -ClientId $ConfigData.client_id `
@@ -108,6 +170,7 @@ $Token = Get-AccessToken -TenantId $ConfigData.tenant_id `
     -Scopes ($ConfigData.scopes ?? @("https://graph.microsoft.com/.default"))
 
 $Sites = Get-JoinedSites -AccessToken $Token
+Write-LogLine "Discovered $($Sites.Count) joined site(s)." "INFO"
 $Added = 0
 
 $SyncRootDir = $ConfigData.sync_root
@@ -115,6 +178,7 @@ if (-not (Test-Path $SyncRootDir)) {
     New-Item -ItemType Directory -Path $SyncRootDir -Force | Out-Null
 }
 $SyncRoot = (Get-Item -Path $SyncRootDir).FullName
+Write-LogLine "Sync root directory prepared at $SyncRoot" "INFO"
 
 foreach ($Site in $Sites) {
     $WebUrl = $Site.webUrl
@@ -156,6 +220,12 @@ foreach ($Site in $Sites) {
 
 if (-not $DryRun) {
     Save-JsonFile -Path $CachePath -Data $Cache
+}
+
+if ($Added -gt 0) {
+    Write-LogLine "Queued $Added new sync job(s)." "SUCCESS"
+} else {
+    Write-LogLine "No new sync jobs were required." "INFO"
 }
 
 Write-Output "Processed $($Sites.Count) site(s); queued $Added new sync(s)."
